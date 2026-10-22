@@ -83,7 +83,7 @@ async function disconnect() {
 
 async function state() {
   const a = await account().catch(() => null);
-  const st = a ? await door.status() : null;
+  const st = a ? await door.status({ wait: true }) : null;
   const place = st?.connections?.[0];
   return { signedIn: !!token && !refused, needsSignIn: refused, signingIn: !!pending, account: place?.label || "", used: place?.used, total: place?.total, problem: st && st.state !== "ready" ? st.next : "" };
 }
