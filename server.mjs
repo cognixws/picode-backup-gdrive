@@ -5,7 +5,7 @@
 import http from "node:http";
 import { timingSafeEqual } from "node:crypto";
 import { Door, send } from "./lib/door.mjs";
-import { authRequest, exchange, revoke } from "./lib/google.mjs";
+import { authRequest, exchange } from "./lib/google.mjs";
 import { HostAPI } from "./lib/host.mjs";
 
 const env = process.env;
@@ -29,7 +29,7 @@ async function account() {
   }
   return token && !refused ? { refreshToken: token } : null;
 }
-const door = new Door({ account, onRefused: () => { refused = true; } });
+const door = new Door({ account, refused: () => refused, onRefused: () => { refused = true; } });
 
 // ---- the sign-in, on a loopback redirect ----
 let pending = null; // { server, state, verifier, redirect, timer }
@@ -44,37 +44,41 @@ async function connect() {
     const u = new URL(rq.url, redirect);
     const page = (title, line) => { rs.writeHead(200, { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store" }); rs.end(`<!doctype html><meta charset="utf-8"><meta name="color-scheme" content="light dark"><title>${title}</title><body style="font:16px system-ui;margin:3rem;max-width:36rem;line-height:1.5"><h1 style="font-size:1.4rem">${title}</h1><p>${line}</p></body>`); };
     if (u.pathname !== "/callback") { rs.writeHead(404); rs.end(); return; }
-    if (!pending || u.searchParams.get("state") !== pending.state) { page("Sign-in expired", "Start again from COGNIX[WS] → Google Drive."); return; }
-    if (u.searchParams.get("error")) { page("Not connected", "Google did not grant access. You can close this tab."); closePending(); return; }
+    const mine = pending;
+    if (!mine || u.searchParams.get("state") !== mine.state) { page("Sign-in expired", "Start again from COGNIX[WS] → Google Drive."); return; }
+    if (u.searchParams.get("error")) { page("Not connected", "Google did not grant access. You can close this tab."); closePending(mine); return; }
     try {
-      const t = await exchange(u.searchParams.get("code"), pending.verifier, pending.redirect);
+      const t = await exchange(u.searchParams.get("code"), mine.verifier, mine.redirect);
+      // Signed out, or a newer sign-in started, while Google answered: this
+      // one keeps nothing.
+      if (pending !== mine) { page("Sign-in replaced", "Start again from COGNIX[WS] → Google Drive."); return; }
       await host.request(`/api/ext/v1/secrets/${SECRET_KEY}`, { method: "PUT", body: { value: t.refresh } });
-      const old = token;
       token = t.refresh;
       refused = false;
-      if (old && old !== t.refresh) void revoke(old);
       page("Connected to Google Drive", "You can close this tab and go back to COGNIX[WS]. Add a destination in Backups to start copying.");
     } catch (e) {
       page("Not connected", e?.reason === "scope_not_granted" ? "COGNIX[WS] needs permission to keep its own files in your Drive. Start again and allow it." : "The sign-in did not finish. Start again from COGNIX[WS].");
     }
-    closePending();
+    closePending(mine);
   });
   return { url: req.url };
 }
-function closePending() {
-  if (!pending) return;
+function closePending(only) {
+  if (!pending || (only && pending !== only)) return;
   clearTimeout(pending.timer);
   pending.server.close();
   pending = null;
 }
 
+// Signing out forgets the sign-in on this computer only. Google's revoke
+// would end the app's access for the whole account, cutting off every other
+// computer signed in with it; the person does that from their Google
+// Account when they mean it.
 async function disconnect() {
   closePending();
-  const old = token;
   await host.request(`/api/ext/v1/secrets/${SECRET_KEY}`, { method: "DELETE" });
   token = "";
   refused = false;
-  if (old) void revoke(old);
 }
 
 async function state() {

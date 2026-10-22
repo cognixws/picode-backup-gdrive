@@ -144,3 +144,40 @@ test("the place follows the account and keeps invisible characters out", () => {
   assert.match(a.id, /^drive-[0-9a-f]{16}$/);
   assert.equal(connectionOf({ user: { emailAddress: "a‮@x.com", permissionId: "1" } }).label, "My Drive · a@x.com");
 });
+
+test("a delete Google rate-limits is waited out, never read as a place that keeps every copy", { timeout: 60_000 }, async () => {
+  const google = await fakeGoogle({ rateLimitDeletes: 2 });
+  const s = await storage(google);
+  try {
+    const c = (await s.status()).connections[0];
+    const base = `${s.url}/repo/${c.id}/r`;
+    await fetch(base + "/?create=true", { method: "POST", headers: s.basic });
+    const body = randomBytes(50);
+    assert.equal((await fetch(`${base}/keys/${sha(body)}`, { method: "POST", headers: s.basic, body })).status, 200);
+    const del = await fetch(`${base}/keys/${sha(body)}`, { method: "DELETE", headers: s.basic });
+    assert.equal(del.status, 200);
+    assert.equal(google.seen.rateLimited, 2);
+    assert.equal((await fetch(`${base}/keys/${sha(body)}`, { method: "HEAD", headers: s.basic })).status, 404);
+  } finally { s.stop(); google.close(); }
+});
+
+test("folders and files deleted in Drive itself are found missing, and made again", { timeout: 60_000 }, async () => {
+  const google = await fakeGoogle();
+  const s = await storage(google);
+  try {
+    const c = (await s.status()).connections[0];
+    const base = `${s.url}/repo/${c.id}/r`;
+    await fetch(base + "/?create=true", { method: "POST", headers: s.basic });
+    const one = randomBytes(40);
+    assert.equal((await fetch(`${base}/data/${sha(one)}`, { method: "POST", headers: s.basic, body: one })).status, 200);
+    // The person deletes the object, then the whole data folder, in Drive.
+    for (const [id, f] of google.files) if (f.name === sha(one)) google.files.delete(id);
+    assert.equal((await fetch(`${base}/data/${sha(one)}`, { method: "HEAD", headers: s.basic })).status, 404, "a deleted object still answers");
+    assert.equal((await fetch(`${base}/data/${sha(one)}`, { method: "POST", headers: s.basic, body: one })).status, 200);
+    assert.ok([...google.files.values()].some((f) => f.name === sha(one)), "the object was not stored again");
+    for (const [id, f] of google.files) if (f.name === "data" || f.name === sha(one)) google.files.delete(id);
+    const two = randomBytes(40);
+    assert.equal((await fetch(`${base}/data/${sha(two)}`, { method: "POST", headers: s.basic, body: two })).status, 200, "an upload into a deleted folder failed");
+    assert.equal((await fetch(`${base}/data/${sha(two)}`, { method: "HEAD", headers: s.basic })).status, 200);
+  } finally { s.stop(); google.close(); }
+});

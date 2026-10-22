@@ -8,7 +8,8 @@
   let state = null, busy = "", error = "", confirmOut = false, poll = 0;
   const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
   const button = (label, action, cls = "") => `<button type="button" class="${cls}" data-action="${action}" ${busy ? "disabled" : ""}>${label}</button>`;
-  const gb = (n) => n >= 1e12 ? (n / 1e12).toFixed(1) + " TB" : (n / 1e9).toFixed(1) + " GB";
+  // The same sizes Backups shows: powers of 1024, megabytes under a gigabyte.
+  const gb = (n) => { const u = [[1024 ** 4, "TB"], [1024 ** 3, "GB"], [1024 ** 2, "MB"]].find(([d]) => n >= d) || [1024 ** 2, "MB"]; const v = n / u[0]; return (v >= 10 || u[1] === "MB" ? Math.round(v) : v.toFixed(1)) + " " + u[1]; };
   async function request(path, method = "GET") {
     if (!processDoor) throw new Error("The extension is off or its process is not running.");
     const r = await processDoor.request(path, { method, body: method === "POST" ? {} : undefined });
@@ -37,7 +38,7 @@
       </dl>
       ${state.problem === "retry" ? `<div class="notice warn" role="status"><span>Google Drive did not answer just now; copies retry on their own.</span></div>` : ""}
       <div class="row">${confirmOut ? `<span>Sign out? Copies stop; what is in your Drive stays.</span>${button("Sign out", "out-yes", "danger")}${button("Cancel", "out-no")}` : button("Sign out", "out")}</div>
-      <p class="muted">Add a destination in Backups → Destinations to start copying. COGNIX[WS] sees only the files it created in your Drive.</p>
+      <p class="muted">Backups → Destinations decides what is copied here. COGNIX[WS] sees only the files it created in your Drive. Signing out stops copies on this computer; to remove COGNIX[WS]'s access everywhere, use your Google Account's third-party connections.</p>
     </section>`;
   }
   function render() {

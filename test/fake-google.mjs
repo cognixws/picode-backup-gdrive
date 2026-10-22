@@ -5,11 +5,11 @@
 import { createServer } from "node:http";
 import { createHash, randomBytes } from "node:crypto";
 
-export function fakeGoogle({ pageSize = 1000, checksum = true, ignoreRange = false, expireTokens = false } = {}) {
+export function fakeGoogle({ pageSize = 1000, checksum = true, ignoreRange = false, expireTokens = false, rateLimitDeletes = 0 } = {}) {
   const files = new Map(); // id → { id, name, parent, mimeType, body }
   const sessions = new Map();
   const tokens = new Set();
-  const seen = { tokenRequests: 0, requests: 0, refreshTokens: ["good"] };
+  const seen = { tokenRequests: 0, requests: 0, rateLimited: 0, refreshTokens: ["good"] };
   const json = (res, code, v) => { res.writeHead(code, { "Content-Type": "application/json" }); res.end(JSON.stringify(v)); };
   const meta = (f) => ({ id: f.id, name: f.name, mimeType: f.mimeType, ...(f.mimeType === "folder" ? {} : { size: String(f.body.length), ...(checksum ? { sha256Checksum: createHash("sha256").update(f.body).digest("hex") } : {}) }) });
   const readBody = (req) => new Promise((resolve) => { const c = []; req.on("data", (d) => c.push(d)); req.on("end", () => resolve(Buffer.concat(c))); req.on("aborted", () => resolve(null)); req.on("error", () => resolve(null)); });
@@ -64,6 +64,7 @@ export function fakeGoogle({ pageSize = 1000, checksum = true, ignoreRange = fal
       }
       if (url.pathname === "/upload/drive/v3/files" && req.method === "POST") {
         const m = JSON.parse((await readBody(req)).toString());
+        if (!files.has(m.parents[0])) return json(res, 404, { error: { message: "SECRET-GOOGLE-WORDS" } });
         const id = randomBytes(8).toString("hex");
         sessions.set(id, { name: m.name, parent: m.parents[0], size: Number(req.headers["x-upload-content-length"]) });
         res.writeHead(200, { Location: `${base}/upload/drive/v3/files?uploadType=resumable&upload_id=${id}` });
@@ -73,7 +74,10 @@ export function fakeGoogle({ pageSize = 1000, checksum = true, ignoreRange = fal
       if (fm) {
         const f = files.get(decodeURIComponent(fm[1]));
         if (!f) return json(res, 404, { error: { message: "SECRET-GOOGLE-WORDS" } });
-        if (req.method === "DELETE") { files.delete(f.id); res.writeHead(204); return res.end(); }
+        if (req.method === "DELETE") {
+          if (seen.rateLimited < rateLimitDeletes) { seen.rateLimited++; return json(res, 403, { error: { errors: [{ reason: "userRateLimitExceeded" }], message: "SECRET-GOOGLE-WORDS" } }); }
+          files.delete(f.id); res.writeHead(204); return res.end();
+        }
         if (req.method === "GET" && url.searchParams.get("alt") === "media") {
           const r = /^bytes=(\d+)-(\d*)$/.exec(req.headers.range || "");
           if (!r || ignoreRange) { res.writeHead(200, { "Content-Length": f.body.length }); return res.end(f.body); }
