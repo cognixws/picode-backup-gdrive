@@ -1,0 +1,16 @@
+{
+  "id": "picode-backup-gdrive",
+  "name": "Google Drive",
+  "version": "0.1.0",
+  "apiVersion": 15,
+  "publisher": "COGNIX[WS]",
+  "description": "Keeps encrypted copies of your COGNIX[WS] backups in your Google Drive, in a \"COGNIX[WS] backups\" folder. COGNIX[WS] encrypts everything before it leaves this computer, and it can see only the files it created in your Drive.",
+  "icon": "ui/icon.svg",
+  "activation": { "instance": true },
+  "settings": [
+    { "key": "refresh_token", "label": "Google sign-in", "type": "secret", "writer": "process", "description": "Kept by the extension when you sign in on its page. Removing it signs COGNIX[WS] out of Google Drive." }
+  ],
+  "process": { "command": "node", "args": ["${extensionDir}/server.mjs"] },
+  "ui": { "pages": [{ "id": "drive", "title": "Google Drive", "path": "ui/index.html" }] },
+  "backup": { "name": "Google Drive", "where": "internet", "repositoryPath": "/repo", "statusPath": "/status" }
+}
