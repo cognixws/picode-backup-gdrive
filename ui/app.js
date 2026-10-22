@@ -60,5 +60,9 @@
     await load();
   }
   root.addEventListener("click", (e) => { const b = e.target.closest("button[data-action]"); if (b) { e.preventDefault(); void act(b.dataset.action); } });
+  // The sign-in can change outside this page (another tab, Credentials, a
+  // restart): it looks again when shown and every 15 seconds while visible.
+  document.addEventListener("visibilitychange", () => { if (!document.hidden && !busy) void load(); });
+  setInterval(() => { if (!document.hidden && !busy && !state?.signingIn) void load(); }, 15_000);
   await load();
 })();
